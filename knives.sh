@@ -52,6 +52,12 @@ EOF
 #############################
 ##     Parse arguments     ##
 #############################
+if [ $# -eq 0 ]
+then
+	knives_help
+	exit
+fi
+
 now="$(date +%Y-%m-%d_%H-%M-%S)"
 log_stderr=1
 filter_ns=0
