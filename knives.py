@@ -2,6 +2,7 @@
 
 from __future__ import print_function
 from csv import DictReader
+from cStringIO import StringIO
 import datetime
 from distutils.spawn import find_executable
 from docopt import docopt
@@ -19,15 +20,10 @@ except ImportError:
 import subprocess as sp
 import tempfile
 
-_ = """
--b BARCODE  Sabre barcode config file.
-"""
-
 CLI_DOC = """
 USAGE:
     knives.py [-K SICKLE -C SCYTHE -E SEQQS -P PAIRS -q QUAL -t TYPE -l LEN -s SKIP \
-            -L LOGDIR -S -n ] -a CONTAM -i IN1 -o OUT1 -I IN2 -O OUT2 -u UNPAIRED\
-            -p PREFIX -r PRIOR
+            -L LOGDIR -S -n ] -a CONTAM -i IN1 -I IN2 -p PREFIX -r PRIOR
 
 OPTIONS:
     -K SICKLE   Location of the sickle executable.
@@ -40,7 +36,7 @@ OPTIONS:
                 illumina. See the help message of scythe for an explanation.
                 [default: sanger]
     -l LEN      Minimum length of sequence remaining after trimming.
-                [default: 40]
+                [default: 64]
     -s SKIP     Skip steps. Comma seperated list of program names. Must be one
                 or more of: scythe, sickle, seqqs.
     -S          Don't log stderr of programs.
@@ -49,10 +45,8 @@ OPTIONS:
     -a CONTAM   Fasta file containing adaptor sequences, for scythe.
     -i IN1      Input R1 file.
     -I IN2      Input R2 file.
-    -o OUT1     Output R1 file.
-    -O OUT2     Output R2 file.
-    -u UNPAIRED  Unpaired ouput file.
-    -p PREFIX   Prefix of ouput files, including seqqs reports and log files.
+    -p PREFIX   Prefix of all ouput files, including seqqs reports and log
+                files.
     -r PRIOR    Prior probabilty of adaptor contamination. See scythe docs.
 """
 
@@ -78,7 +72,8 @@ def setup_logs(opts):
     cmd_lfn = path.join(opts["-L"], opts["-p"] + "_cmds_" + NOW + ".log")
     cmd_fh = logging.FileHandler(cmd_lfn)
     cmd_fh.setLevel(logging.INFO)
-    cmd_fmt = logging.Formatter('%(asctime)20s: %(message)s')
+    cmd_fmt = logging.Formatter('%(asctime)s:\t%(message)s',
+                                "%Y-%m-%d %H:%M:%S")
     cmd_fh.setFormatter(cmd_fmt)
     CMD_LOG.addHandler(cmd_fh)
     CMD_LOG.setLevel(logging.INFO)
@@ -156,134 +151,140 @@ def main(opts):
     global SUMMARY_LOG
     setup_logs(opts)
     find_progs(opts)
-    # Setup output files
-    unpaired_fh = gzip.open(opts['-u'], "w")
-    unpaired_tmpfn = path.join(tempfile.gettempdir(), "unpaired_" + NOW)
-    os.mkfifo(unpaired_tmpfn)
+    if not path.exists(opts['-i']) or  not path.exists(opts['-I']):
+        print("Input files must exist!")
+        exit(1)
+    if not path.exists(opts['-a']):
+        print("Adapter file must exist!")
+        exit(1)
     # interleave reads
     interleave_cli = [
-            PAIRS,  # EXE path
-            "join",  # join command to interleave 2 fqs
-            "-t",  # write /1 /2 tags to header
-            opts['-i'],  # R1 file
-            opts['-I'],  # R2 file
-            ]
-    interleave_stderr = tempfile.TemporaryFile()
+        PAIRS,  # EXE path
+        "join",  # join command to interleave 2 fqs
+        "-t",  # write /1 /2 tags to header
+        opts['-i'],  # R1 file
+        opts['-I'],  # R2 file
+    ]
+    interleave_stderr = tempfile.TemporaryFile("rw+b")
     CMD_LOG.info(" ".join(interleave_cli))
     interleave_proc = sp.Popen(interleave_cli, stdout=sp.PIPE,
             stderr=interleave_stderr)
     # initial QC
     seqqs_il_cli = [
-            SEQQS,  # exe path
-            "-i",  # interleaved input
-            "-e",  # enable streaming
-            "-q",  # Qual encoding is:
-            opts['-q'],
-            "-p",  # prefix is:
-            opts["-p"] + "_initial_" + NOW,
-            "-",  # Use stdin
-            ]
+        SEQQS,  # exe path
+        "-i",  # interleaved input
+        "-e",  # enable streaming
+        "-q",  # Qual encoding is:
+        opts['-t'],
+        "-p",  # prefix is:
+        opts["-p"] + "_initial_",
+        "-",  # Use stdin
+    ]
     CMD_LOG.info(" ".join(seqqs_il_cli))
-    seqqs_il_stderr = tempfile.TemporaryFile()
+    seqqs_il_stderr = tempfile.TemporaryFile("rw+b")
     seqqs_il_proc = sp.Popen(seqqs_il_cli, stdin=interleave_proc.stdout,
-            stdout=sp.PIPE, stderr=seqqs_il_stderr)
+                             stdout=sp.PIPE, stderr=seqqs_il_stderr)
     interleave_proc.stdout.close()
     # scythe
     scythe_cli = [
-            SCYTHE,  # exe path
-            "-p",  # prior is:
-            opts["-r"],
-            "-a",  # Adaptor file is:
-            opts["-a"],
-            "-M", "0",  # Stop scythe discarding reads, leave that to pairs
-            "-",  # Use stdin
-            ]
+        SCYTHE,  # exe path
+        "-p",  # prior is:
+        opts["-r"],
+        "-a",  # Adaptor file is:
+        opts["-a"],
+        "-M", opts['-l'],
+        "/dev/stdin",  # Use stdin
+    ]
     CMD_LOG.info(" ".join(scythe_cli))
-    scythe_stderr = tempfile.TemporaryFile()
+    scythe_stderr = tempfile.TemporaryFile("rw+b")
     scythe_proc = sp.Popen(scythe_cli, stdin=seqqs_il_proc.stdout,
             stdout=sp.PIPE, stderr=scythe_stderr)
     seqqs_il_proc.stdout.close()
     # QC after adaptor removal
     seqqs_na_cli = [
-            SEQQS,  # exe path
-            "-i",  # interleaved input
-            "-e",  # enable streaming
-            "-q",  # Qual encoding is:
-            opts['-q'],
-            "-p",  # prefix is:
-            opts["-p"] + "_noadapt_" + NOW,
-            "-",  # Use stdin
-            ]
+        SEQQS,  # exe path
+        "-i",  # interleaved input
+        "-e",  # enable streaming
+        "-q",  # Qual encoding is:
+        opts['-t'],
+        "-p",  # prefix is:
+        opts["-p"] + "_noadapt",
+        "-",  # Use stdin
+    ]
     CMD_LOG.info(" ".join(seqqs_na_cli))
-    seqqs_na_stderr = tempfile.TemporaryFile()
+    seqqs_na_stderr = tempfile.TemporaryFile("rw+b")
     seqqs_na_proc = sp.Popen(seqqs_na_cli, stdin=scythe_proc.stdout,
-            stdout=sp.PIPE, stderr=seqqs_na_stderr)
+                             stdout=sp.PIPE, stderr=seqqs_na_stderr)
     scythe_proc.stdout.close()
     # Sickle
     sickle_cli = [
-            SICKLE,  # exe path
-            "pe",  # paired end mode
-            "-t",  # Qual encoding is:
-            opts['-q'],
-            "-c", "/dev/stdin",  # Use stdin for input
-            "-m", "/dev/stdout",  # And stdout for output
-            "-s", unpaired_tmpfn, # temp fifo for unpaired stuff
-            "-q",  # min window quality is:
-            opts["-q"],
-            "-l",  # min length is:
-            opts["-l"],
-            ]
+        SICKLE,  # exe path
+        "pe",  # paired end mode
+        "-t",  # Qual encoding is:
+        opts['-t'],
+        "-c", "/dev/stdin",  # Use stdin for input
+        "-M", "/dev/stdout",  # And stdout for output
+        "-q",  # min window quality is:
+        opts["-q"],
+        "-l",  # min length is:
+        opts["-l"],
+    ]
     if opts['-n']:
         sickle_cli.append("-n")  # Remove any read w/ Ns
     CMD_LOG.info(" ".join(sickle_cli))
-    sickle_stderr = tempfile.TemporaryFile()
+    sickle_stderr = tempfile.TemporaryFile("rw+b")
     sickle_proc = sp.Popen(sickle_cli, stdin=seqqs_na_proc.stdout,
-            stdout=sp.PIPE, stderr=sickle_stderr)
+                           stdout=sp.PIPE, stderr=sickle_stderr)
     seqqs_il_proc.stdout.close()
-    # Cat unpaired reads to file handle (avoids us touching disk)
-    cat_cli = [
-            "cat",
-            unpaired_tmpfn, # temp fifo for unpaired stuff
-            ]
-    CMD_LOG.info(" ".join(cat_cli))
-    cat_stderr = tempfile.TemporaryFile()
-    cat_proc = sp.Popen(cat_cli, stdin=None,
-            stdout=unpaired_fh, stderr=cat_stderr)
     # QC after qual trimming
     seqqs_qt_cli = [
-            SEQQS,  # exe path
-            "-i",  # interleaved input
-            "-e",  # enable streaming
-            "-q",  # Qual encoding is:
-            opts['-q'],
-            "-p",  # prefix is:
-            opts["-p"] + "_qualtrim_" + NOW,
-            "-",  # Use stdin
-            ]
+        SEQQS,  # exe path
+        "-i",  # interleaved input
+        "-e",  # enable streaming
+        "-q",  # Qual encoding is:
+        opts['-t'],
+        "-p",  # prefix is:
+        opts["-p"] + "_qualtrim",
+        "-",  # Use stdin
+    ]
     CMD_LOG.info(" ".join(seqqs_qt_cli))
-    seqqs_qt_stderr = tempfile.TemporaryFile()
+    seqqs_qt_stderr = tempfile.TemporaryFile("rw+b")
     seqqs_qt_proc = sp.Popen(seqqs_qt_cli, stdin=sickle_proc.stdout,
-            stdout=sp.PIPE, stderr=seqqs_qt_stderr)
+                             stdout=sp.PIPE, stderr=seqqs_qt_stderr)
     sickle_proc.stdout.close()
     # deinterleave
     deinterleave_cli = [
-            PAIRS,  # exe path
-            "split",  # interleaved input
-            "-1", opts['-o'],
-            "-2", opts['-O'],
-            "-u", opts['-u'],
-            "-",  # Use stdin
-            ]
+        PAIRS,  # exe path
+        "split",  # interleaved input
+        "-1", opts['-p'] + "_R1.knives.fastq",
+        "-2", opts['-p'] + "_R2.knives.fastq",
+        "-u", opts['-p'] + "_singles.knives.fastq",
+        "-",  # Use stdin
+    ]
     CMD_LOG.info(" ".join(deinterleave_cli))
-    deinterleave_stderr = tempfile.TemporaryFile()
+    deinterleave_stderr = tempfile.TemporaryFile("rw+b")
+    deinterleave_stdout = tempfile.TemporaryFile("rw+b")
     deinterleave_proc = sp.Popen(deinterleave_cli, stdin=seqqs_qt_proc.stdout,
-            stdout=sp.PIPE, stderr=deinterleave_stderr)
+                                 stdout=deinterleave_stdout,
+                                 stderr=deinterleave_stderr)
     sickle_proc.stdout.close()
-    print(deinterleave_proc.communicate())
-    os.unlink(unpaired_tmpfn)
-
+    deinterleave_proc.wait()
+    # reset al stderr files
+    interleave_stderr.seek(0)
+    seqqs_il_stderr.seek(0)
+    scythe_stderr.seek(0)
+    seqqs_na_stderr.seek(0)
+    sickle_stderr.seek(0)
+    seqqs_qt_stderr.seek(0)
+    deinterleave_stderr.seek(0)
+    STDERR_LOG.info(interleave_stderr.read())
+    STDERR_LOG.info(seqqs_il_stderr.read())
+    STDERR_LOG.info(scythe_stderr.read())
+    STDERR_LOG.info(seqqs_na_stderr.read())
+    STDERR_LOG.info(sickle_stderr.read())
+    STDERR_LOG.info(seqqs_qt_stderr.read())
+    STDERR_LOG.info(deinterleave_stderr.read())
 
 if __name__ == "__main__":
     opts = docopt(CLI_DOC)
-    print(opts)
     main(opts)
