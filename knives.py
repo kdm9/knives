@@ -57,14 +57,12 @@ SEQQS = None
 PAIRS = None
 CMD_LOG = None
 STDERR_LOG = None
-SUMMARY_LOG = None
 NOW = datetime.datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
 
 def setup_logs(opts):
     """Setup logging and store loggers in global vars."""
     global CMD_LOG
     global STDERR_LOG
-    global SUMMARY_LOG
     if not path.exists(opts["-L"]):
         raise RuntimeError("Log directory not found.")
     # Logger for the exact comands run
@@ -90,17 +88,6 @@ def setup_logs(opts):
     else:
         STDERR_LOG.addHandler(logging.NullHandler())
     STDERR_LOG.setLevel(logging.INFO)
-    # Logger for a summary of the run
-    SUMMARY_LOG = logging.getLogger("knives_summary")
-    summary_lfn = path.join(opts["-L"], opts["-p"] + "_summary_" + NOW + ".log")
-    summary_fh = logging.FileHandler(summary_lfn)
-    summary_fh.setLevel(logging.INFO)
-    summary_fmt = logging.Formatter(
-            '%(asctime)20s - %(levelname)8s: %(message)s')
-    summary_fh.setFormatter(summary_fmt)
-    SUMMARY_LOG.addHandler(summary_fh)
-    SUMMARY_LOG.setLevel(logging.INFO)
-    SUMMARY_LOG.debug("Logging set up OK")
 
 def find_progs(opts):
     """Finds EXEs of the 4 programs needed; stores paths in global vars."""
@@ -148,7 +135,6 @@ def main(opts):
     global PAIRS
     global CMD_LOG
     global STDERR_LOG
-    global SUMMARY_LOG
     setup_logs(opts)
     find_progs(opts)
     if not path.exists(opts['-i']) or  not path.exists(opts['-I']):
