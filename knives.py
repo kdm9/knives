@@ -2,7 +2,6 @@
 
 from __future__ import print_function
 from csv import DictReader
-from cStringIO import StringIO
 import datetime
 from distutils.spawn import find_executable
 from docopt import docopt
@@ -10,13 +9,6 @@ import gzip
 import logging
 import os
 from os import path
-try:
-    import io.StringIO as stringIO
-except ImportError:
-    try:
-        from cStringIO import StringIO as stringIO
-    except ImportError:
-        from StringIO import StringIO as stringIO
 import subprocess as sp
 import tempfile
 
@@ -82,7 +74,8 @@ def setup_logs(opts):
         stderr_fh = logging.FileHandler(stderr_lfn)
         stderr_fh.setLevel(logging.DEBUG)
         stderr_fmt = logging.Formatter(
-                '%(asctime)20s - %(levelname)8s: %(message)s')
+            '%(asctime)20s - %(levelname)8s: %(message)s',
+            "%Y-%m-%d %H:%M:%S")
         stderr_fh.setFormatter(stderr_fmt)
         STDERR_LOG.addHandler(stderr_fh)
     else:
@@ -135,14 +128,19 @@ def main(opts):
     global PAIRS
     global CMD_LOG
     global STDERR_LOG
-    setup_logs(opts)
-    find_progs(opts)
     if not path.exists(opts['-i']) or  not path.exists(opts['-I']):
         print("Input files must exist!")
         exit(1)
     if not path.exists(opts['-a']):
         print("Adapter file must exist!")
         exit(1)
+    if os.sep in opts['-p']:
+        if not path.isdir(path.dirname(opts['-p'])):
+            print("Prefix is invalid path.")
+            print("dirname(p) must exist if path contains {}.".format(os.sep))
+            exit(1)
+    setup_logs(opts)
+    find_progs(opts)
     # interleave reads
     interleave_cli = [
         PAIRS,  # EXE path
@@ -154,7 +152,7 @@ def main(opts):
     interleave_stderr = tempfile.TemporaryFile("rw+b")
     CMD_LOG.info(" ".join(interleave_cli))
     interleave_proc = sp.Popen(interleave_cli, stdout=sp.PIPE,
-            stderr=interleave_stderr)
+                               stderr=interleave_stderr)
     # initial QC
     seqqs_il_cli = [
         SEQQS,  # exe path
