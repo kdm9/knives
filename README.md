@@ -1,10 +1,10 @@
 knives
 ======
 
-
-A pipelined quality control script that utilises the UC Davis Biocore's
-[sabre](https://github.com/najoshi/sabre), [sickle](https://github.com/najoshi/sickle),
-[scythe](https://github.com/vsbuffalo/scythe) and [seqqs](https://github.com/vsbuffalo/seqqs).
+A pipelined quality control script that utilises the UC Davis Bioinformatics
+Core's [sickle](https://github.com/najoshi/sickle),
+[scythe](https://github.com/vsbuffalo/scythe) and
+[seqqs](https://github.com/vsbuffalo/seqqs).
 
 Usage:
 ------
@@ -16,7 +16,8 @@ mandatory and optional parameters. Run
     $ knives
 
 to see a full range of parameters. A detailed user manual is on it's way, but
-as this tool is simply a wrapper around [sabre](https://github.com/najoshi/sabre),
-[sickle](https://github.com/najoshi/sickle), [scythe](https://github.com/vsbuffalo/scythe)
-and [seqqs](https://github.com/vsbuffalo/seqqs), one can for the time being consult
+as this tool is simply a wrapper around
+[sickle](https://github.com/najoshi/sickle),
+[scythe](https://github.com/vsbuffalo/scythe) and
+[seqqs](https://github.com/vsbuffalo/seqqs), one can for the time being consult
 their excellent user guides, available from each tool's GitHub page.
